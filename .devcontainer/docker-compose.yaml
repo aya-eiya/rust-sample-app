@@ -1,0 +1,8 @@
+services:
+  dev:
+    image: mcr.microsoft.com/vscode/devcontainers/rust:bullseye
+    restart: always
+    tty: true
+    volumes:
+      - ../:/workspace
+    working_dir: /workspace
