@@ -1,4 +1,5 @@
 use crate::domains::app_date::{AppDate, AppDateService};
+use async_trait::async_trait;
 use chrono::{DateTime, Datelike, Timelike, Utc};
 
 pub struct SystemAppDate {
@@ -42,8 +43,9 @@ impl SystemAppDateService {
     }
 }
 
+#[async_trait]
 impl AppDateService for SystemAppDateService {
-    fn now(&self) -> Box<dyn AppDate> {
+    async fn now(&self) -> Box<dyn AppDate> {
         Box::new(SystemAppDate {
             current: Utc::now(),
         })

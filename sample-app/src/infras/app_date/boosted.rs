@@ -1,4 +1,5 @@
 use crate::domains::app_date::{AppDate, AppDateService};
+use async_trait::async_trait;
 use chrono::{DateTime, Datelike, NaiveDateTime, Timelike, Utc};
 
 pub struct BoostedAppDate {
@@ -56,8 +57,9 @@ impl BoostedAppDateService {
     }
 }
 
+#[async_trait]
 impl AppDateService for BoostedAppDateService {
-    fn now(&self) -> Box<dyn AppDate> {
+    async fn now(&self) -> Box<dyn AppDate> {
         let base = self.base.timestamp_millis();
         let system = Utc::now().timestamp_millis();
         let current = system + i64::from(self.offset_days) * 24 * 60 * 60 * 1000;

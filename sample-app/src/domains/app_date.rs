@@ -1,3 +1,5 @@
+use async_trait::async_trait;
+
 pub trait AppDate {
     fn year(&self) -> i32;
     fn month(&self) -> u32;
@@ -6,6 +8,8 @@ pub trait AppDate {
     fn min(&self) -> u32;
     fn second(&self) -> u32;
     fn milli_second(&self) -> u32;
+
+    #[inline]
     fn display(&self) -> String {
         let y = self.year();
         let m = self.month();
@@ -19,10 +23,11 @@ pub trait AppDate {
     }
 }
 
+#[async_trait]
 pub trait AppDateService {
-    fn now(&self) -> Box<dyn AppDate>;
+    async fn now(&self) -> Box<dyn AppDate>;
 }
 
 pub trait AppDateTimeSpan {
-    fn display(&self) -> &'static str;
+    fn display(&self) -> String;
 }
