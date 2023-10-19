@@ -1,3 +1,5 @@
+use std::borrow::BorrowMut;
+
 use crate::domains::{
     gold::Gold,
     resource::{ResourceLike, WorkStats},
@@ -5,12 +7,13 @@ use crate::domains::{
     tool::ToolLike,
     worker::{WorkerEfficiency, WorkerLike},
 };
+use futures::lock::Mutex;
 use once_cell::sync::Lazy;
 
-type ResouceId = i32;
-type WorkerId = i32;
-type ToolId = i32;
-type ToolMasterId = i32;
+type ResouceId = u32;
+type WorkerId = u32;
+type ToolId = u32;
+type ToolMasterId = u32;
 
 #[derive(Debug, Clone)]
 pub struct Resource {
@@ -22,7 +25,7 @@ pub struct Resource {
 pub struct Worker {
     pub id: WorkerId,
     pub name: String,
-    pub health: i32,
+    pub health: u32,
     pub tool_id: Option<ToolId>,
 }
 
@@ -41,10 +44,10 @@ pub struct ToolBody {
 
 #[derive(Debug, Clone)]
 pub struct ToolMaster {
-    pub id: ToolId,
+    pub id: ToolMasterId,
     pub name: String,
-    pub price: i32,
-    pub master_id: ToolMasterId,
+    pub price: u32,
+    pub efficiency: ToolEfficiency,
 }
 
 #[derive(Debug, Clone)]
@@ -54,44 +57,57 @@ pub struct ToolMasterBody {
     pub master_id: ToolMasterId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Master {
-    pub tools: Vec<ToolMaster>,
+    tools: Mutex<Vec<ToolMaster>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DataBase {
-    resources: Vec<Resource>,
-    workers: Vec<Worker>,
-    tools: Vec<Tool>,
+    resources: Mutex<Vec<Resource>>,
+    workers: Mutex<Vec<Worker>>,
+    tools: Mutex<Vec<Tool>>,
 }
 
 impl DataBase {
     fn new() -> DataBase {
         DataBase {
-            resources: vec![],
-            workers: vec![],
-            tools: vec![],
+            resources: Mutex::new(vec![]),
+            workers: Mutex::new(vec![]),
+            tools: Mutex::new(vec![]),
         }
     }
 }
+
 impl Master {
     fn new() -> Master {
-        Master { tools: vec![] }
+        Master {
+            tools: Mutex::new(vec![]),
+        }
     }
 }
 
-static DB: Lazy<DataBase> = Lazy::new(|| DataBase::new());
-static MASTER: Lazy<Master> = Lazy::new(|| Master::new());
+struct InMemoryDBContext {
+    db: DataBase,
+    master: Master,
+}
+
+impl InMemoryDBContext {
+    fn new(&self) -> InMemoryDBContext {
+        InMemoryDBContext {
+            db: DataBase::new(),
+            master: Master::new(),
+        }
+    }
+}
+
+static DATA_BASE: Lazy<InMemoryDBContext> = Lazy<InMemoryDBContext>::new(InMemoryDBContext::new);
 
 trait DbMember {
-    fn db(&self) -> DataBase {
-        DB.clone()
-    }
-    fn master(&self) -> Master {
-        MASTER.clone()
-    }
+    fn db(&self) -> DataBase;
+    fn master(&self) -> Master;
 }
+
 impl DbMember for Resource {}
 impl ResourceLike for Resource {
     fn try_dig(&self, worker: Box<dyn WorkerLike>) -> WorkStats {
@@ -147,19 +163,21 @@ impl ResourceLike for Resource {
 }
 
 pub trait ResourcesAsTable {
+    fn create_resource(&mut self, item: ToolBody) -> Tool;
     fn find_resource_by_id(&self, id: ResouceId) -> Option<Resource>;
-    fn update_resource(&self, id: ResouceId, item: Resource) -> Option<Resource>;
+    fn update_resource(&mut self, id: ResouceId, item: Resource) -> Option<Resource>;
 }
 
 pub trait WorkerAsTable {
+    fn create_worker(&mut self, item: ToolBody) -> Tool;
     fn find_worker_by_id(&self, id: WorkerId) -> Option<Worker>;
-    fn update_worker(&self, id: WorkerId, item: Worker) -> Option<Worker>;
+    fn update_worker(&mut self, id: WorkerId, item: Worker) -> Option<Worker>;
 }
 
 pub trait ToolAsTable {
-    fn create_tool(&self, item: ToolBody) -> Tool;
+    fn create_tool(&mut self, item: ToolBody) -> Tool;
     fn find_tool_by_id(&self, id: ToolId) -> Option<Tool>;
-    fn update_tool(&self, id: ToolId, item: Tool) -> Option<Tool>;
+    fn update_tool(&mut self, id: ToolId, item: Tool) -> Option<Tool>;
 }
 
 pub trait ToolMasterAsTable {
@@ -172,7 +190,11 @@ impl ResourcesAsTable for DataBase {
         todo!()
     }
 
-    fn update_resource(&self, id: ResouceId, item: Resource) -> Option<Resource> {
+    fn update_resource(&mut self, id: ResouceId, item: Resource) -> Option<Resource> {
+        todo!()
+    }
+
+    fn create_resource(&mut self, item: ToolBody) -> Tool {
         todo!()
     }
 }
@@ -180,7 +202,7 @@ impl ResourcesAsTable for DataBase {
 impl DbMember for Worker {}
 
 impl WorkerLike for Worker {
-    fn id(&self) -> i32 {
+    fn id(&self) -> u32 {
         self.id
     }
 
@@ -188,7 +210,7 @@ impl WorkerLike for Worker {
         self.name.clone()
     }
 
-    fn health(&self) -> i32 {
+    fn health(&self) -> u32 {
         self.health
     }
 
@@ -218,30 +240,38 @@ impl WorkerAsTable for DataBase {
 impl DbMember for Tool {}
 
 impl ToolLike for Tool {
-    fn id(&self) -> i32 {
+    fn id(&self) -> u32 {
         self.id
     }
 
-    fn price(&self) -> u32 {
-        self.price()
+    fn attrition_rate(&self) -> u32 {
+        self.attrition_rate
     }
 
-    fn attrition_rate(&self) -> u32 {
-        self.attrition_rate()
+    fn price(&self) -> u32 {
+        let t = self
+            .master()
+            .find_tool_master_by_id(self.master_id)
+            .map_or(0, |m| m.price / 100 * self.attrition_rate());
+        return t;
     }
 
     fn efficiency(&self) -> ToolEfficiency {
-        self.master().find_tool_master_by_id(self.master_id);
+        let t = self
+            .master()
+            .find_tool_master_by_id(self.master_id)
+            .map_or(0, |m| m.efficiency / 100 * self.attrition_rate());
+        return t;
     }
 }
 
 impl ToolAsTable for DataBase {
     fn find_tool_by_id(&self, id: ToolId) -> Option<Tool> {
-        self.tools.iter().find(|i| i.id == id).map(|i| i.clone())
+        self.tools.iter().find(|i| i.id() == id).map(|i| i.clone())
     }
 
-    fn update_tool(&self, id: ToolId, item: Tool) -> Option<Tool> {
-        todo!()
+    fn update_tool(&mut self, id: ToolId, item: Tool) -> Option<Tool> {
+        Some(item)
     }
 
     fn create_tool(&self, item: ToolBody) -> Tool {
