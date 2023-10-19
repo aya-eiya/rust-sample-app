@@ -1,3 +1,5 @@
+extern crate rand;
+
 use std::borrow::BorrowMut;
 
 use crate::domains::{
@@ -7,7 +9,6 @@ use crate::domains::{
     tool::ToolLike,
     worker::{WorkerEfficiency, WorkerLike},
 };
-use futures::lock::Mutex;
 use once_cell::sync::Lazy;
 
 type ResouceId = u32;
@@ -17,13 +18,26 @@ type ToolMasterId = u32;
 
 #[derive(Debug, Clone)]
 pub struct Resource {
+    id: ResouceId,
+    deposit_amount: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResourceBody {
     pub id: ResouceId,
     pub deposit_amount: u32,
 }
 
 #[derive(Debug, Clone)]
 pub struct Worker {
-    pub id: WorkerId,
+    id: WorkerId,
+    name: String,
+    health: u32,
+    tool_id: Option<ToolId>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkerBody {
     pub name: String,
     pub health: u32,
     pub tool_id: Option<ToolId>,
@@ -53,37 +67,35 @@ pub struct ToolMaster {
 #[derive(Debug, Clone)]
 pub struct ToolMasterBody {
     pub name: String,
-    pub price: i32,
-    pub master_id: ToolMasterId,
+    pub price: u32,
+    pub efficiency: ToolEfficiency,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Master {
-    tools: Mutex<Vec<ToolMaster>>,
+    tools: Vec<ToolMaster>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DataBase {
-    resources: Mutex<Vec<Resource>>,
-    workers: Mutex<Vec<Worker>>,
-    tools: Mutex<Vec<Tool>>,
+    resources: Vec<Resource>,
+    workers: Vec<Worker>,
+    tools: Vec<Tool>,
 }
 
 impl DataBase {
     fn new() -> DataBase {
         DataBase {
-            resources: Mutex::new(vec![]),
-            workers: Mutex::new(vec![]),
-            tools: Mutex::new(vec![]),
+            resources: vec![],
+            workers: vec![],
+            tools: vec![],
         }
     }
 }
 
 impl Master {
     fn new() -> Master {
-        Master {
-            tools: Mutex::new(vec![]),
-        }
+        Master { tools: vec![] }
     }
 }
 
@@ -93,7 +105,7 @@ struct InMemoryDBContext {
 }
 
 impl InMemoryDBContext {
-    fn new(&self) -> InMemoryDBContext {
+    fn new() -> InMemoryDBContext {
         InMemoryDBContext {
             db: DataBase::new(),
             master: Master::new(),
@@ -101,12 +113,18 @@ impl InMemoryDBContext {
     }
 }
 
-static DATA_BASE: Lazy<InMemoryDBContext> = Lazy<InMemoryDBContext>::new(InMemoryDBContext::new);
+static DATA_BASE: Lazy<InMemoryDBContext> = Lazy::new(|| InMemoryDBContext::new());
 
 trait DbMember {
-    fn db(&self) -> DataBase;
-    fn master(&self) -> Master;
+    fn db(&self) -> DataBase {
+        DATA_BASE.db.to_owned()
+    }
+    fn master(&self) -> Master {
+        DATA_BASE.master.to_owned()
+    }
 }
+
+impl DbMember for InMemoryDBContext {}
 
 impl DbMember for Resource {}
 impl ResourceLike for Resource {
@@ -163,13 +181,13 @@ impl ResourceLike for Resource {
 }
 
 pub trait ResourcesAsTable {
-    fn create_resource(&mut self, item: ToolBody) -> Tool;
+    fn create_resource(&mut self, item: ResourceBody) -> Resource;
     fn find_resource_by_id(&self, id: ResouceId) -> Option<Resource>;
     fn update_resource(&mut self, id: ResouceId, item: Resource) -> Option<Resource>;
 }
 
 pub trait WorkerAsTable {
-    fn create_worker(&mut self, item: ToolBody) -> Tool;
+    fn create_worker(&mut self, item: WorkerBody) -> Worker;
     fn find_worker_by_id(&self, id: WorkerId) -> Option<Worker>;
     fn update_worker(&mut self, id: WorkerId, item: Worker) -> Option<Worker>;
 }
@@ -181,21 +199,41 @@ pub trait ToolAsTable {
 }
 
 pub trait ToolMasterAsTable {
-    fn create_tool_master(&self, item: ToolMasterBody) -> ToolMaster;
+    fn create_tool_master(&mut self, item: ToolMasterBody) -> ToolMaster;
     fn find_tool_master_by_id(&self, id: ToolMasterId) -> Option<ToolMaster>;
 }
 
 impl ResourcesAsTable for DataBase {
     fn find_resource_by_id(&self, id: ResouceId) -> Option<Resource> {
-        todo!()
+        self.resources
+            .iter()
+            .find(|i| i.id == id)
+            .map(|i| i.clone())
     }
 
     fn update_resource(&mut self, id: ResouceId, item: Resource) -> Option<Resource> {
-        todo!()
+        let mut rs = vec![];
+        rs.append(self.resources.borrow_mut());
+        if let Ok(found) = self.resources.binary_search_by(|i| i.id.cmp(&id)) {
+            rs[found] = item.clone();
+            return Some(item);
+        }
+        self.resources = rs;
+        return None;
     }
 
-    fn create_resource(&mut self, item: ToolBody) -> Tool {
-        todo!()
+    fn create_resource(&mut self, item: ResourceBody) -> Resource {
+        loop {
+            let nid: u32 = rand::random();
+            if self.find_resource_by_id(nid).is_none() {
+                let item = Resource {
+                    id: nid,
+                    deposit_amount: item.deposit_amount,
+                };
+                self.resources.push(item.to_owned());
+                return item;
+            }
+        }
     }
 }
 
@@ -232,8 +270,31 @@ impl WorkerAsTable for DataBase {
         self.workers.iter().find(|i| i.id == id).map(|i| i.clone())
     }
 
-    fn update_worker(&self, id: WorkerId, item: Worker) -> Option<Worker> {
-        todo!()
+    fn update_worker(&mut self, id: WorkerId, item: Worker) -> Option<Worker> {
+        let mut rs = vec![];
+        rs.append(self.workers.borrow_mut());
+        if let Ok(found) = self.workers.binary_search_by(|i| i.id.cmp(&id)) {
+            rs[found] = item.clone();
+            return Some(item);
+        }
+        self.workers = rs;
+        return None;
+    }
+
+    fn create_worker(&mut self, item: WorkerBody) -> Worker {
+        loop {
+            let nid: u32 = rand::random();
+            if self.find_worker_by_id(nid).is_none() {
+                let item = Worker {
+                    id: nid,
+                    health: item.health,
+                    name: item.name,
+                    tool_id: item.tool_id,
+                };
+                self.workers.push(item.to_owned());
+                return item;
+            }
+        }
     }
 }
 
@@ -271,20 +332,75 @@ impl ToolAsTable for DataBase {
     }
 
     fn update_tool(&mut self, id: ToolId, item: Tool) -> Option<Tool> {
-        Some(item)
+        let mut rs = vec![];
+        rs.append(self.tools.borrow_mut());
+        if let Ok(found) = self.tools.binary_search_by(|i| i.id.cmp(&id)) {
+            rs[found] = item.clone();
+            return Some(item);
+        }
+        self.tools = rs;
+        return None;
     }
 
-    fn create_tool(&self, item: ToolBody) -> Tool {
-        todo!()
+    fn create_tool(&mut self, item: ToolBody) -> Tool {
+        loop {
+            let nid: u32 = rand::random();
+            if self.find_tool_by_id(nid).is_none() {
+                let item = Tool {
+                    id: nid,
+                    attrition_rate: item.attrition_rate,
+                    master_id: item.master_id,
+                };
+                self.tools.push(item.to_owned());
+                return item;
+            }
+        }
     }
 }
 
 impl ToolMasterAsTable for Master {
-    fn create_tool_master(&self, item: ToolMasterBody) -> ToolMaster {
-        todo!()
+    fn find_tool_master_by_id(&self, id: ToolMasterId) -> Option<ToolMaster> {
+        self.tools.iter().find(|i| i.id == id).map(|i| i.clone())
     }
 
-    fn find_tool_master_by_id(&self, id: ToolMasterId) -> Option<ToolMaster> {
-        todo!()
+    fn create_tool_master(&mut self, item: ToolMasterBody) -> ToolMaster {
+        loop {
+            let nid: u32 = rand::random();
+            if self.find_tool_master_by_id(nid).is_none() {
+                let item = ToolMaster {
+                    id: nid,
+                    efficiency: item.efficiency,
+                    name: item.name,
+                    price: item.price,
+                };
+                self.tools.push(item.to_owned());
+                return item;
+            }
+        }
     }
+}
+
+#[cfg(test)]
+#[test]
+fn it_works() {
+    let m = &mut DATA_BASE.master();
+    let d = &mut DATA_BASE.db();
+    let tm1 = m.create_tool_master(ToolMasterBody {
+        efficiency: 1,
+        name: String::from("tool_0"),
+        price: 100,
+    });
+    let tm2_opt = m.find_tool_master_by_id(tm1.id);
+    if let Some(tm2) = tm2_opt {
+        assert_eq!(tm1.id, tm2.id);
+        assert_eq!(tm1.name, tm2.name);
+        assert_eq!(tm1.price, tm2.price);
+    } else {
+        panic!("master not found");
+    }
+    let t1 = d.create_tool(ToolBody {
+        attrition_rate: 100,
+        master_id: tm1.id,
+    });
+    assert_eq!(t1.price(), tm1.price)
 }
