@@ -1,6 +1,9 @@
 extern crate rand;
 
-use std::borrow::BorrowMut;
+use std::{
+    borrow::BorrowMut,
+    sync::{Mutex, MutexGuard},
+};
 
 use crate::domains::{
     gold::Gold,
@@ -9,7 +12,7 @@ use crate::domains::{
     tool::ToolLike,
     worker::{WorkerEfficiency, WorkerLike},
 };
-use once_cell::sync::Lazy;
+use once_cell::sync::OnceCell;
 
 type ResouceId = u32;
 type WorkerId = u32;
@@ -71,12 +74,12 @@ pub struct ToolMasterBody {
     pub efficiency: ToolEfficiency,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Master {
     tools: Vec<ToolMaster>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DataBase {
     resources: Vec<Resource>,
     workers: Vec<Worker>,
@@ -85,6 +88,7 @@ pub struct DataBase {
 
 impl DataBase {
     fn new() -> DataBase {
+        println!("initializing DataBase");
         DataBase {
             resources: vec![],
             workers: vec![],
@@ -95,32 +99,30 @@ impl DataBase {
 
 impl Master {
     fn new() -> Master {
+        println!("initializing Master");
         Master { tools: vec![] }
     }
 }
 
-struct InMemoryDBContext {
-    db: DataBase,
-    master: Master,
-}
-
-impl InMemoryDBContext {
-    fn new() -> InMemoryDBContext {
-        InMemoryDBContext {
-            db: DataBase::new(),
-            master: Master::new(),
-        }
-    }
-}
-
-static DATA_BASE: Lazy<InMemoryDBContext> = Lazy::new(|| InMemoryDBContext::new());
+#[derive(Debug)]
+struct InMemoryDBContext {}
+static DATA_BASE: OnceCell<Mutex<DataBase>> = OnceCell::new();
+static MASTER: OnceCell<Mutex<Master>> = OnceCell::new();
 
 trait DbMember {
-    fn db(&self) -> DataBase {
-        DATA_BASE.db.to_owned()
+    fn db(&self) -> MutexGuard<'static, DataBase> {
+        println!("call db");
+        return DATA_BASE
+            .get_or_init(|| Mutex::new(DataBase::new()))
+            .lock()
+            .unwrap();
     }
-    fn master(&self) -> Master {
-        DATA_BASE.master.to_owned()
+    fn master(&self) -> MutexGuard<'static, Master> {
+        println!("call master");
+        return MASTER
+            .get_or_init(|| Mutex::new(Master::new()))
+            .lock()
+            .unwrap();
     }
 }
 
@@ -317,6 +319,14 @@ impl ToolLike for Tool {
         return t;
     }
 
+    fn name(&self) -> String {
+        let t = self
+            .master()
+            .find_tool_master_by_id(self.master_id)
+            .map_or(String::from("unknown"), |m| m.name);
+        return t;
+    }
+
     fn efficiency(&self) -> ToolEfficiency {
         let t = self
             .master()
@@ -383,24 +393,40 @@ impl ToolMasterAsTable for Master {
 #[cfg(test)]
 #[test]
 fn it_works() {
-    let m = &mut DATA_BASE.master();
-    let d = &mut DATA_BASE.db();
-    let tm1 = m.create_tool_master(ToolMasterBody {
-        efficiency: 1,
-        name: String::from("tool_0"),
-        price: 100,
-    });
-    let tm2_opt = m.find_tool_master_by_id(tm1.id);
-    if let Some(tm2) = tm2_opt {
-        assert_eq!(tm1.id, tm2.id);
-        assert_eq!(tm1.name, tm2.name);
-        assert_eq!(tm1.price, tm2.price);
-    } else {
-        panic!("master not found");
+    println!("test");
+    let ctx = InMemoryDBContext {};
+    {
+        let tm1;
+        {
+            let m: &mut MutexGuard<'_, Master> = &mut ctx.master();
+            tm1 = m.create_tool_master(ToolMasterBody {
+                efficiency: 1,
+                name: String::from("tool_0"),
+                price: 0,
+            });
+        }
+        let tm2;
+        {
+            let m: &mut MutexGuard<'_, Master> = &mut ctx.master();
+            let tm_opt = m.find_tool_master_by_id(tm1.id);
+            if let Some(tm) = tm_opt {
+                tm2 = tm;
+                assert_eq!(tm1.id, tm2.id);
+                assert_eq!(tm1.name, tm2.name);
+                assert_eq!(tm1.price, tm2.price);
+            } else {
+                panic!("master not found");
+            }
+        }
+        let t1;
+        {
+            let d = &mut ctx.db();
+            t1 = d.create_tool(ToolBody {
+                attrition_rate: 100,
+                master_id: tm1.id,
+            });
+            assert_eq!(t1.price(), tm1.price);
+            assert_eq!(t1.name(), tm1.name);
+        }
     }
-    let t1 = d.create_tool(ToolBody {
-        attrition_rate: 100,
-        master_id: tm1.id,
-    });
-    assert_eq!(t1.price(), tm1.price)
 }
