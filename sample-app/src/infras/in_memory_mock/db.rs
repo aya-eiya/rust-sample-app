@@ -27,7 +27,6 @@ pub struct Resource {
 
 #[derive(Debug, Clone)]
 pub struct ResourceBody {
-    pub id: ResouceId,
     pub deposit_amount: u32,
 }
 
@@ -130,7 +129,7 @@ impl DbMember for InMemoryDBContext {}
 
 impl DbMember for Resource {}
 impl ResourceLike for Resource {
-    fn try_dig(&self, worker: Box<dyn WorkerLike>) -> WorkStats {
+    fn try_dig(&mut self, worker: Box<dyn WorkerLike>) -> WorkStats {
         let hlth = worker.health() - 1;
         let tool = match worker
             .tool()
@@ -144,7 +143,7 @@ impl ResourceLike for Resource {
                     attrition_rate: if tt.attrition_rate - 1 > 0 {
                         tt.attrition_rate - 1
                     } else {
-                        100
+                        0
                     },
                 },
             ),
@@ -154,8 +153,11 @@ impl ResourceLike for Resource {
             })),
         };
         let max = self.deposit_amount / 100;
-        let amount = max * (worker.tool().map_or(1, |t| t.efficiency()) * worker.efficiency());
-        let remain = max - amount;
+        let tool_efficiency = worker.tool().map_or(1, |t| t.efficiency());
+        let amount = max * (tool_efficiency * worker.efficiency());
+        println!("{} {} {}", max, tool_efficiency, worker.efficiency());
+        let remain = self.deposit_amount - amount;
+        self.deposit_amount = remain;
         let up_worker = self.db().update_worker(
             worker.id(),
             Worker {
@@ -165,13 +167,7 @@ impl ResourceLike for Resource {
                 tool_id: tool.map(|t| t.id),
             },
         );
-        self.db().update_resource(
-            self.id,
-            Resource {
-                id: self.id,
-                deposit_amount: remain,
-            },
-        );
+        self.db().update_resource(self.id, self.clone());
         WorkStats {
             worker: match up_worker {
                 Some(w) => Box::new(w),
@@ -263,7 +259,7 @@ impl WorkerLike for Worker {
     }
 
     fn efficiency(&self) -> WorkerEfficiency {
-        todo!()
+        self.health / 100
     }
 }
 
@@ -331,7 +327,7 @@ impl ToolLike for Tool {
         let t = self
             .master()
             .find_tool_master_by_id(self.master_id)
-            .map_or(0, |m| m.efficiency / 100 * self.attrition_rate());
+            .map_or(1, |m| m.efficiency * self.attrition_rate() / 100);
         return t;
     }
 }
@@ -398,7 +394,7 @@ fn it_works() {
     {
         let tm1;
         {
-            let m: &mut MutexGuard<'_, Master> = &mut ctx.master();
+            let m = &mut ctx.master();
             tm1 = m.create_tool_master(ToolMasterBody {
                 efficiency: 1,
                 name: String::from("tool_0"),
@@ -407,7 +403,7 @@ fn it_works() {
         }
         let tm2;
         {
-            let m: &mut MutexGuard<'_, Master> = &mut ctx.master();
+            let m = ctx.master();
             let tm_opt = m.find_tool_master_by_id(tm1.id);
             if let Some(tm) = tm_opt {
                 tm2 = tm;
@@ -427,6 +423,32 @@ fn it_works() {
             });
             assert_eq!(t1.price(), tm1.price);
             assert_eq!(t1.name(), tm1.name);
+        }
+        let w1;
+        {
+            let d = &mut ctx.db();
+            w1 = d.create_worker(WorkerBody {
+                name: String::from("worker1"),
+                health: 100,
+                tool_id: Some(t1.id),
+            });
+            assert_eq!(w1.health(), 100);
+            assert_eq!(w1.name(), "worker1");
+        }
+        let mut r1;
+        {
+            let d = &mut ctx.db();
+            r1 = d.create_resource(ResourceBody {
+                deposit_amount: 50000,
+            });
+            assert_eq!(r1.deposit_amount, 50000);
+        }
+        let res;
+        {
+            let prev = r1.deposit_amount;
+            res = r1.try_dig(Box::new(w1));
+            assert_ne!(r1.deposit_amount, 50000);
+            assert_eq!(res.gold.amount, prev - r1.deposit_amount);
         }
     }
 }

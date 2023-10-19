@@ -6,5 +6,5 @@ pub struct WorkStats {
     pub gold: Gold,
 }
 pub trait ResourceLike {
-    fn try_dig(&self, worker: Box<dyn WorkerLike>) -> WorkStats;
+    fn try_dig(&mut self, worker: Box<dyn WorkerLike>) -> WorkStats;
 }
