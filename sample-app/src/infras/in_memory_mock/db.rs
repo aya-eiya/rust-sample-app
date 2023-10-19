@@ -32,23 +32,6 @@ pub struct Tool {
     attrition_rate: u32,
     master_id: ToolMasterId,
 }
-impl ToolLike for Tool {
-    fn id(&self) -> i32 {
-        self.id
-    }
-
-    fn price(&self) -> u32 {
-        todo!()
-    }
-
-    fn attrition_rate(&self) -> u32 {
-        todo!()
-    }
-
-    fn efficiency(&self) -> ToolEfficiency {
-        todo!()
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct ToolBody {
@@ -59,6 +42,13 @@ pub struct ToolBody {
 #[derive(Debug, Clone)]
 pub struct ToolMaster {
     pub id: ToolId,
+    pub name: String,
+    pub price: i32,
+    pub master_id: ToolMasterId,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolMasterBody {
     pub name: String,
     pub price: i32,
     pub master_id: ToolMasterId,
@@ -85,12 +75,21 @@ impl DataBase {
         }
     }
 }
+impl Master {
+    fn new() -> Master {
+        Master { tools: vec![] }
+    }
+}
 
 static DB: Lazy<DataBase> = Lazy::new(|| DataBase::new());
+static MASTER: Lazy<Master> = Lazy::new(|| Master::new());
 
 trait DbMember {
     fn db(&self) -> DataBase {
         DB.clone()
+    }
+    fn master(&self) -> Master {
+        MASTER.clone()
     }
 }
 impl DbMember for Resource {}
@@ -164,6 +163,7 @@ pub trait ToolAsTable {
 }
 
 pub trait ToolMasterAsTable {
+    fn create_tool_master(&self, item: ToolMasterBody) -> ToolMaster;
     fn find_tool_master_by_id(&self, id: ToolMasterId) -> Option<ToolMaster>;
 }
 
@@ -215,6 +215,26 @@ impl WorkerAsTable for DataBase {
     }
 }
 
+impl DbMember for Tool {}
+
+impl ToolLike for Tool {
+    fn id(&self) -> i32 {
+        self.id
+    }
+
+    fn price(&self) -> u32 {
+        self.price()
+    }
+
+    fn attrition_rate(&self) -> u32 {
+        self.attrition_rate()
+    }
+
+    fn efficiency(&self) -> ToolEfficiency {
+        self.master().find_tool_master_by_id(self.master_id);
+    }
+}
+
 impl ToolAsTable for DataBase {
     fn find_tool_by_id(&self, id: ToolId) -> Option<Tool> {
         self.tools.iter().find(|i| i.id == id).map(|i| i.clone())
@@ -225,6 +245,16 @@ impl ToolAsTable for DataBase {
     }
 
     fn create_tool(&self, item: ToolBody) -> Tool {
+        todo!()
+    }
+}
+
+impl ToolMasterAsTable for Master {
+    fn create_tool_master(&self, item: ToolMasterBody) -> ToolMaster {
+        todo!()
+    }
+
+    fn find_tool_master_by_id(&self, id: ToolMasterId) -> Option<ToolMaster> {
         todo!()
     }
 }
