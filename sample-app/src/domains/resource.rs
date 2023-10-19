@@ -1,10 +1,10 @@
 use crate::domains::gold::Gold;
-use crate::domains::worker::Worker;
+use crate::domains::worker::WorkerLike;
 
 pub struct WorkStats {
-    worker: Box<dyn Worker>,
-    gold: Gold,
+    pub worker: Box<dyn WorkerLike>,
+    pub gold: Gold,
 }
-pub trait Resource {
-    fn try_dig(&self, worker: dyn Worker) -> WorkStats;
+pub trait ResourceLike {
+    fn try_dig(&self, worker: Box<dyn WorkerLike>) -> WorkStats;
 }
