@@ -130,7 +130,6 @@ impl DbMember for InMemoryDBContext {}
 impl DbMember for Resource {}
 impl ResourceLike for Resource {
     fn try_dig(&mut self, worker: Box<dyn WorkerLike>) -> WorkStats {
-        let hlth = worker.health() - 1;
         let tool = match worker
             .tool()
             .and_then(|t| self.db().find_tool_by_id(t.id()))
@@ -155,9 +154,9 @@ impl ResourceLike for Resource {
         let max = self.deposit_amount / 100;
         let tool_efficiency = worker.tool().map_or(1, |t| t.efficiency());
         let amount = max * (tool_efficiency * worker.efficiency());
-        println!("{} {} {}", max, tool_efficiency, worker.efficiency());
         let remain = self.deposit_amount - amount;
         self.deposit_amount = remain;
+        let hlth = worker.health() - 1;
         let up_worker = self.db().update_worker(
             worker.id(),
             Worker {
@@ -253,7 +252,10 @@ impl WorkerLike for Worker {
     fn tool(&self) -> Option<Box<dyn ToolLike>> {
         let t = self
             .tool_id
-            .and_then(|id| self.db().find_tool_by_id(id))
+            .and_then(|id| {
+                println!("worker tool {}", id);
+                self.db().find_tool_by_id(id)
+            })
             .map(|t| Box::new(t) as Box<dyn ToolLike>);
         return t;
     }
@@ -270,12 +272,22 @@ impl WorkerAsTable for DataBase {
 
     fn update_worker(&mut self, id: WorkerId, item: Worker) -> Option<Worker> {
         let mut rs = vec![];
-        rs.append(self.workers.borrow_mut());
-        if let Ok(found) = self.workers.binary_search_by(|i| i.id.cmp(&id)) {
+        println!("worker len {}", self.workers.len());
+        let res = self.workers.binary_search_by(|i| {
+            let op = i.id.cmp(&id);
+            println!("worker binary_search_by {} {} {}", i.id, id, op.is_eq());
+            op
+        });
+        if let Ok(found) = res {
+            print!("update worker");
+            rs.append(self.workers.borrow_mut());
             rs[found] = item.clone();
+            self.workers = rs;
             return Some(item);
+        } else if let Err(pos) = res {
+            println!("worker err {}", pos);
         }
-        self.workers = rs;
+        println!("worker notfound");
         return None;
     }
 
@@ -289,7 +301,8 @@ impl WorkerAsTable for DataBase {
                     name: item.name,
                     tool_id: item.tool_id,
                 };
-                self.workers.push(item.to_owned());
+                self.workers.push(item.clone());
+                println!("create worker {} {}", item.id(), self.workers.len());
                 return item;
             }
         }
@@ -449,6 +462,20 @@ fn it_works() {
             res = r1.try_dig(Box::new(w1));
             assert_ne!(r1.deposit_amount, 50000);
             assert_eq!(res.gold.amount, prev - r1.deposit_amount);
+        }
+        {
+            let d = &mut ctx.db();
+            let w_opt = d.find_worker_by_id(res.worker.id());
+            if let Some(w) = w_opt {
+                assert_eq!(w.id(), res.worker.id());
+                assert_eq!(w.name(), res.worker.name());
+                assert_eq!(w.name(), "worker1");
+                assert_eq!(w.health(), res.worker.health());
+                assert_eq!(w.health(), 99);
+                assert!(w.tool().is_none());
+            } else {
+                panic!("master not found");
+            }
         }
     }
 }
