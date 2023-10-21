@@ -12,7 +12,7 @@ use crate::domains::{
     tool::ToolLike,
     worker::{WorkerEfficiency, WorkerLike},
 };
-use once_cell::sync::OnceCell;
+use once_cell::sync::Lazy;
 
 type ResouceId = u32;
 type WorkerId = u32;
@@ -92,7 +92,6 @@ pub struct DataBase {
 
 impl DataBase {
     fn new() -> DataBase {
-        println!("initializing DataBase");
         DataBase {
             resources: vec![],
             workers: vec![],
@@ -103,28 +102,21 @@ impl DataBase {
 
 impl Master {
     fn new() -> Master {
-        println!("initializing Master");
         Master { tools: vec![] }
     }
 }
 
 #[derive(Debug)]
 struct InMemoryDBContext {}
-static DATA_BASE: OnceCell<Mutex<DataBase>> = OnceCell::new();
-static MASTER: OnceCell<Mutex<Master>> = OnceCell::new();
+static DATA_BASE: Lazy<Mutex<DataBase>> = Lazy::new(|| Mutex::new(DataBase::new()));
+static MASTER: Lazy<Mutex<Master>> = Lazy::new(|| Mutex::new(Master::new()));
 
 trait DbMember {
     fn db(&self) -> MutexGuard<'static, DataBase> {
-        return DATA_BASE
-            .get_or_init(|| Mutex::new(DataBase::new()))
-            .lock()
-            .unwrap();
+        DATA_BASE.lock().unwrap()
     }
     fn master(&self) -> MutexGuard<'static, Master> {
-        return MASTER
-            .get_or_init(|| Mutex::new(Master::new()))
-            .lock()
-            .unwrap();
+        MASTER.lock().unwrap()
     }
 }
 
@@ -155,7 +147,6 @@ impl ResourceLike for Resource {
         let tool_efficiency = worker.tool().map_or(1, |t| t.efficiency());
         let amount = max * (tool_efficiency * worker.efficiency());
         let remain = self.deposit_amount - amount;
-        println!("remain {}", amount);
         self.deposit_amount = remain;
         let hlth = worker.health() - 1;
         let up_worker = self.db().update_worker(
@@ -252,10 +243,7 @@ impl WorkerLike for Worker {
     fn tool(&self) -> Option<Box<dyn ToolLike>> {
         let t = self
             .tool_id
-            .and_then(|id| {
-                println!("worker tool {}", id);
-                self.db().find_tool_by_id(id)
-            })
+            .and_then(|id| self.db().find_tool_by_id(id))
             .map(|t| Box::new(t) as Box<dyn ToolLike>);
         return t;
     }
@@ -297,7 +285,6 @@ impl WorkerAsTable for DataBase {
                     tool_id: item.tool_id,
                 };
                 self.workers.push(item.clone());
-                println!("create worker {} {}", item.id(), self.workers.len());
                 return item;
             }
         }
@@ -401,7 +388,6 @@ impl ToolMasterAsTable for Master {
 #[cfg(test)]
 #[test]
 fn it_works() {
-    println!("test");
     let ctx = InMemoryDBContext {};
     {
         let tm1;
