@@ -59,6 +59,11 @@ pub struct ToolBody {
 }
 
 #[derive(Debug, Clone)]
+pub struct ToolUpdateBody {
+    pub attrition_rate: u32,
+}
+
+#[derive(Debug, Clone)]
 pub struct ToolMaster {
     pub id: ToolMasterId,
     pub name: String,
@@ -128,40 +133,37 @@ impl DbMember for InMemoryDBContext {}
 impl DbMember for Resource {}
 impl ResourceLike for Resource {
     fn try_dig(&mut self, worker: Box<dyn WorkerLike>) -> WorkStats {
-        let tool = match worker
-            .tool()
-            .and_then(|t| self.db().find_tool_by_id(t.id()))
-        {
-            Some(tt) => self.db().update_tool(
-                tt.id,
-                Tool {
-                    id: tt.id,
-                    master_id: tt.master_id,
-                    attrition_rate: if tt.attrition_rate - 1 > 0 {
-                        tt.attrition_rate - 1
+        let tool = match worker.tool().and_then(|t| {
+            self.db().update_tool(
+                t.id(),
+                ToolUpdateBody {
+                    attrition_rate: if t.attrition_rate() - 1 > 0 {
+                        t.attrition_rate() - 1
                     } else {
                         0
                     },
                 },
-            ),
-            None => Some(self.db().create_tool(ToolBody {
+            )
+        }) {
+            Some(tt) => tt,
+            None => self.db().create_tool(ToolBody {
                 attrition_rate: 100,
                 master_id: 0,
-            })),
+            }),
         };
         let max = self.deposit_amount / 100;
         let tool_efficiency = worker.tool().map_or(1, |t| t.efficiency());
         let amount = max * (tool_efficiency * worker.efficiency());
         let remain = self.deposit_amount - amount;
+        println!("remain {}", amount);
         self.deposit_amount = remain;
         let hlth = worker.health() - 1;
         let up_worker = self.db().update_worker(
             worker.id(),
-            Worker {
-                id: worker.id(),
+            WorkerBody {
                 name: worker.name(),
                 health: if hlth > 0 { hlth } else { 0 },
-                tool_id: tool.map(|t| t.id),
+                tool_id: Some(tool.id()),
             },
         );
         self.db().update_resource(self.id, self.clone());
@@ -184,13 +186,13 @@ pub trait ResourcesAsTable {
 pub trait WorkerAsTable {
     fn create_worker(&mut self, item: WorkerBody) -> Worker;
     fn find_worker_by_id(&self, id: WorkerId) -> Option<Worker>;
-    fn update_worker(&mut self, id: WorkerId, item: Worker) -> Option<Worker>;
+    fn update_worker(&mut self, id: WorkerId, item: WorkerBody) -> Option<Worker>;
 }
 
 pub trait ToolAsTable {
     fn create_tool(&mut self, item: ToolBody) -> Tool;
     fn find_tool_by_id(&self, id: ToolId) -> Option<Tool>;
-    fn update_tool(&mut self, id: ToolId, item: Tool) -> Option<Tool>;
+    fn update_tool(&mut self, id: ToolId, item: ToolUpdateBody) -> Option<Tool>;
 }
 
 pub trait ToolMasterAsTable {
@@ -268,13 +270,18 @@ impl WorkerAsTable for DataBase {
         self.workers.iter().find(|i| i.id == id).map(|i| i.clone())
     }
 
-    fn update_worker(&mut self, id: WorkerId, item: Worker) -> Option<Worker> {
+    fn update_worker(&mut self, id: WorkerId, item: WorkerBody) -> Option<Worker> {
         if let Ok(found) = self.workers.binary_search_by(|i| i.id.cmp(&id)) {
             let mut rs = vec![];
             rs.append(self.workers.borrow_mut());
-            rs[found] = item.clone();
+            rs[found] = Worker {
+                id,
+                health: item.health,
+                name: item.name,
+                tool_id: item.tool_id,
+            };
             self.workers = rs;
-            return Some(item);
+            return Some(self.workers[found].clone());
         }
         return None;
     }
@@ -312,7 +319,7 @@ impl ToolLike for Tool {
         let t = self
             .master()
             .find_tool_master_by_id(self.master_id)
-            .map_or(0, |m| m.price / 100 * self.attrition_rate());
+            .map_or(0, |m| m.price * self.attrition_rate() / 100);
         return t;
     }
 
@@ -329,7 +336,7 @@ impl ToolLike for Tool {
             .master()
             .find_tool_master_by_id(self.master_id)
             .map_or(1, |m| m.efficiency * self.attrition_rate() / 100);
-        return t;
+        return if t > 0 { t } else { 1 };
     }
 }
 
@@ -338,13 +345,17 @@ impl ToolAsTable for DataBase {
         self.tools.iter().find(|i| i.id() == id).map(|i| i.clone())
     }
 
-    fn update_tool(&mut self, id: ToolId, item: Tool) -> Option<Tool> {
+    fn update_tool(&mut self, id: ToolId, item: ToolUpdateBody) -> Option<Tool> {
         if let Ok(found) = self.tools.binary_search_by(|i| i.id.cmp(&id)) {
             let mut rs = vec![];
             rs.append(self.tools.borrow_mut());
-            rs[found] = item.clone();
+            rs[found] = Tool {
+                id,
+                master_id: rs[found].master_id,
+                attrition_rate: item.attrition_rate,
+            };
             self.tools = rs;
-            return Some(item);
+            return Some(self.tools[found].clone());
         }
         return None;
     }
@@ -451,19 +462,24 @@ fn it_works() {
             assert_ne!(r1.deposit_amount, 50000);
             assert_eq!(res.gold.amount, prev - r1.deposit_amount);
         }
+        let w2;
         {
             let d = &mut ctx.db();
             let w_opt = d.find_worker_by_id(res.worker.id());
             if let Some(w) = w_opt {
-                assert_eq!(w.id(), res.worker.id());
-                assert_eq!(w.name(), res.worker.name());
-                assert_eq!(w.name(), "worker1");
-                assert_eq!(w.health(), res.worker.health());
-                assert_eq!(w.health(), 99);
-                assert!(w.tool().is_none());
+                w2 = w;
             } else {
                 panic!("master not found");
             }
+        }
+        {
+            assert_eq!(w2.id(), res.worker.id());
+            assert_eq!(w2.name(), res.worker.name());
+            assert_eq!(w2.name(), "worker1");
+            assert_eq!(w2.health(), res.worker.health());
+            assert_eq!(w2.health(), 99);
+            assert!(w2.tool().is_some());
+            assert!(w2.tool().is_some_and(|t| t.attrition_rate() == 99));
         }
     }
 }
