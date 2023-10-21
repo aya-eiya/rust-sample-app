@@ -110,14 +110,12 @@ static MASTER: OnceCell<Mutex<Master>> = OnceCell::new();
 
 trait DbMember {
     fn db(&self) -> MutexGuard<'static, DataBase> {
-        println!("call db");
         return DATA_BASE
             .get_or_init(|| Mutex::new(DataBase::new()))
             .lock()
             .unwrap();
     }
     fn master(&self) -> MutexGuard<'static, Master> {
-        println!("call master");
         return MASTER
             .get_or_init(|| Mutex::new(Master::new()))
             .lock()
@@ -209,13 +207,13 @@ impl ResourcesAsTable for DataBase {
     }
 
     fn update_resource(&mut self, id: ResouceId, item: Resource) -> Option<Resource> {
-        let mut rs = vec![];
-        rs.append(self.resources.borrow_mut());
         if let Ok(found) = self.resources.binary_search_by(|i| i.id.cmp(&id)) {
+            let mut rs = vec![];
+            rs.append(self.resources.borrow_mut());
             rs[found] = item.clone();
+            self.resources = rs;
             return Some(item);
         }
-        self.resources = rs;
         return None;
     }
 
@@ -271,23 +269,13 @@ impl WorkerAsTable for DataBase {
     }
 
     fn update_worker(&mut self, id: WorkerId, item: Worker) -> Option<Worker> {
-        let mut rs = vec![];
-        println!("worker len {}", self.workers.len());
-        let res = self.workers.binary_search_by(|i| {
-            let op = i.id.cmp(&id);
-            println!("worker binary_search_by {} {} {}", i.id, id, op.is_eq());
-            op
-        });
-        if let Ok(found) = res {
-            print!("update worker");
+        if let Ok(found) = self.workers.binary_search_by(|i| i.id.cmp(&id)) {
+            let mut rs = vec![];
             rs.append(self.workers.borrow_mut());
             rs[found] = item.clone();
             self.workers = rs;
             return Some(item);
-        } else if let Err(pos) = res {
-            println!("worker err {}", pos);
         }
-        println!("worker notfound");
         return None;
     }
 
@@ -351,13 +339,13 @@ impl ToolAsTable for DataBase {
     }
 
     fn update_tool(&mut self, id: ToolId, item: Tool) -> Option<Tool> {
-        let mut rs = vec![];
-        rs.append(self.tools.borrow_mut());
         if let Ok(found) = self.tools.binary_search_by(|i| i.id.cmp(&id)) {
+            let mut rs = vec![];
+            rs.append(self.tools.borrow_mut());
             rs[found] = item.clone();
+            self.tools = rs;
             return Some(item);
         }
-        self.tools = rs;
         return None;
     }
 
